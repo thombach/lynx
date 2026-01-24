@@ -74,16 +74,14 @@ void ForecastWeatherScreen::draw()
     matrix->drawPixel(x, y - 4, maxColor);
 
     // Precipitations
-    String dailyPrecipitationSumStr = String((int)round(weatherManager->daysPrecipitationSum[0]));
-    String nextPrecipitationSumStr = String((int)round(weatherManager->daysPrecipitationSum[1]));
+    String dailyPrecipitationSumStr = String((int)round(weatherManager->daysPrecipitationSum[0])) + String(" m");
+    String nextPrecipitationSumStr = String((int)round(weatherManager->daysPrecipitationSum[1])) + String(" m");
     matrix->setTextColor(displayManager.color565(255, 255, 255));
-    matrix->setCursor(50, 10);
+    matrix->setCursor(47, 10);
     matrix->print(dailyPrecipitationSumStr);
-    displayManager.drawBitmap(bitmap_precipitations, 6, 6, matrix->getCursorX() + 1, 6);
 
-    matrix->setCursor(50, 26);
+    matrix->setCursor(47, 26);
     matrix->print(nextPrecipitationSumStr);
-    displayManager.drawBitmap(bitmap_precipitations, 6, 6, matrix->getCursorX() + 1, 22);
 
     matrix->show();
     weatherManager->setDirty(false);
