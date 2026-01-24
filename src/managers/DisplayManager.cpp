@@ -12,18 +12,27 @@ DisplayManager::DisplayManager()
 void DisplayManager::begin(Adafruit_Protomatter *m)
 {
     matrix = m;
-
-    // Cache brightness from ConfigManager ONCE
-    brightness = ConfigManager::getInstance().brightness;
-    if (brightness < 0.0f)
-        brightness = 0.0f;
-    if (brightness > 1.0f)
-        brightness = 1.0f;
-
-    // Build lookup tables now
-    buildLUTs();
+    brightness = -1.0f; // force initial rebuild
+    updateBrightness();
 }
 
+void DisplayManager::updateBrightness()
+{
+    float newBrightness = ConfigManager::getInstance().brightness;
+
+    // Clamp
+    if (newBrightness < 0.0f)
+        newBrightness = 0.0f;
+    if (newBrightness > 1.0f)
+        newBrightness = 1.0f;
+
+    // Only rebuild LUTs if brightness actually changed
+    if (fabsf(newBrightness - brightness) > 0.001f)
+    {
+        brightness = newBrightness;
+        buildLUTs();
+    }
+}
 //
 // Build Gamma & Brightness LUTs
 //

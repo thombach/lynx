@@ -9,6 +9,8 @@ public:
     DisplayManager();
     void begin(Adafruit_Protomatter *matrix);
 
+    void updateBrightness();
+
     void drawBitmap(const uint16_t *bitmap, int w, int h, int x, int y);
 
     uint16_t color565(uint8_t r, uint8_t g, uint8_t b);

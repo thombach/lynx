@@ -8,6 +8,8 @@ public:
 
     bool load();
 
+    void increaseBrightness();
+
     String wifiSsid;
     String wifiPassword;
     float brightness;

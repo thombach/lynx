@@ -13,6 +13,9 @@
 #include "screens/TransportScreen.h"
 #include "managers/DisplayManager.h"
 
+#define BUTTON_UP PIN_BUTTON_UP
+#define BUTTON_DOWN PIN_BUTTON_DOWN
+
 // Matrix Portal S3 default pin mapping:
 uint8_t rgbPins[] = {42, 40, 41, 38, 37, 39};
 uint8_t addrPins[] = {45, 36, 48, 35};
@@ -64,6 +67,31 @@ void displayLoadingScreen()
   matrix.show();
 }
 
+void nextScreen(unsigned long now)
+{
+  lastSwitch = now;
+  currentScreen = (currentScreen + 1) % numScreens;
+
+  matrix.fillScreen(0);
+  matrix.show();
+  screens[currentScreen]->draw();
+}
+
+void upButton()
+{
+  config.increaseBrightness();
+  displayManager.updateBrightness();
+  screens[currentScreen]->draw();
+  delay(100);
+}
+
+void downButton()
+{
+  unsigned long now = millis();
+  nextScreen(now);
+  delay(100);
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -107,23 +135,31 @@ void setup()
   bikeManager.begin();
   transportManager.begin();
 
+  pinMode(BUTTON_UP, INPUT_PULLUP);
+  pinMode(BUTTON_DOWN, INPUT_PULLUP);
+
   lastSwitch = millis(); // Start switching screens after the setup
 }
 
 void loop()
 {
+  if (digitalRead(BUTTON_UP) == LOW)
+  {
+    upButton();
+  }
+
+  if (digitalRead(BUTTON_DOWN) == LOW)
+  {
+    downButton();
+  }
+
   unsigned long now = millis();
 
   screens[currentScreen]->update();
 
   if (now - lastSwitch >= config.screenInterval)
   {
-    lastSwitch = now;
-    currentScreen = (currentScreen + 1) % numScreens;
-
-    matrix.fillScreen(0);
-    matrix.show();
-    screens[currentScreen]->draw(); // Draw first time
+    nextScreen(now);
   }
   delay(100);
 }

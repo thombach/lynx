@@ -52,3 +52,13 @@ bool ConfigManager::load()
     Serial.println("Config loaded !");
     return true;
 }
+
+void ConfigManager::increaseBrightness()
+{
+    brightness += 0.05;
+
+    if (brightness > 1.0)
+    {
+        brightness = 0.05;
+    }
+}
