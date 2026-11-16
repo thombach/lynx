@@ -7,11 +7,26 @@ namespace
 {
     constexpr int32_t CONNECT_TIMEOUT_MS = 5000;
     constexpr uint16_t READ_TIMEOUT_MS = 8000;
+
+    String error;
+
+    bool fail(const String &message)
+    {
+        error = message;
+        Serial.printf("[http] %s\n", message.c_str());
+        return false;
+    }
+}
+
+const String &Http::lastError()
+{
+    return error;
 }
 
 bool Http::getJson(const String &url, JsonDocument &doc, const JsonDocument &filter,
                    const char *username, const char *password)
 {
+    error = "";
     WiFiClientSecure client;
     client.setCACert(ROOT_CA_CERTS);
 
@@ -22,8 +37,7 @@ bool Http::getJson(const String &url, JsonDocument &doc, const JsonDocument &fil
 
     if (!http.begin(client, url))
     {
-        Serial.printf("[http] Invalid URL: %s\n", url.c_str());
-        return false;
+        return fail("Invalid URL: " + url);
     }
     if (username && *username)
     {
@@ -33,18 +47,15 @@ bool Http::getJson(const String &url, JsonDocument &doc, const JsonDocument &fil
     int code = http.GET();
     if (code != HTTP_CODE_OK)
     {
-        Serial.printf("[http] GET %s failed: %d %s\n", url.c_str(), code,
-                      code < 0 ? HTTPClient::errorToString(code).c_str() : "");
         http.end();
-        return false;
+        return fail("GET " + url + " failed: " + (code < 0 ? HTTPClient::errorToString(code) : "HTTP " + String(code)));
     }
 
-    DeserializationError error = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+    DeserializationError parseError = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
     http.end();
-    if (error)
+    if (parseError)
     {
-        Serial.printf("[http] Invalid JSON from %s: %s\n", url.c_str(), error.c_str());
-        return false;
+        return fail("Invalid JSON from " + url + ": " + parseError.c_str());
     }
     return true;
 }

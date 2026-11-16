@@ -1,6 +1,7 @@
 #include "BrightnessManager.h"
 #include <Preferences.h>
 #include "ConfigManager.h"
+#include "core/TimeMath.h"
 
 namespace
 {
@@ -17,9 +18,24 @@ void BrightnessManager::begin()
     prefs.end();
 }
 
-void BrightnessManager::cycle()
+void BrightnessManager::step(int delta)
 {
-    level = level >= LEVELS ? 1 : level + 1;
+    setLevel(level + delta);
+}
+
+void BrightnessManager::setUserLevel(float value)
+{
+    setLevel(lroundf(value * LEVELS));
+}
+
+void BrightnessManager::setLevel(int value)
+{
+    value = constrain(value, 1, LEVELS);
+    if (value == level)
+    {
+        return;
+    }
+    level = value;
 
     Preferences prefs;
     prefs.begin(NVS_NAMESPACE, false);
@@ -56,10 +72,5 @@ bool BrightnessManager::isNight() const
         return false;
     }
 
-    int minutes = now.tm_hour * 60 + now.tm_min;
-    if (config.nightStart < config.nightEnd)
-    {
-        return minutes >= config.nightStart && minutes < config.nightEnd;
-    }
-    return minutes >= config.nightStart || minutes < config.nightEnd; // Spans midnight
+    return core::inWindow(now.tm_hour * 60 + now.tm_min, config.nightStart, config.nightEnd);
 }

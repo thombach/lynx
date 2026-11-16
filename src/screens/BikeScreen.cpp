@@ -3,6 +3,11 @@
 #include "bitmap.h"
 #include "ui/Text.h"
 
+namespace
+{
+    constexpr int16_t ICON_SLOT = 5;
+}
+
 void BikeScreen::draw()
 {
     if (!bikes.hasData())
@@ -12,9 +17,9 @@ void BikeScreen::draw()
     }
 
     BikeData data = bikes.get();
-    stationName.draw(display, toAscii(data.stationName), 2, 6, display.color(255, 255, 255));
+    stationName.draw(display, toAscii(data.stationName), 2, 1, display.color(255, 255, 255));
 
-    display.drawBitmap(bitmap_bike, 35, 19, 3, 11);
+    display.drawBitmap(bitmap_bike, 3, 11);
 
     display.gfx().setFont(&Picopixel);
     display.gfx().setTextSize(1);
@@ -29,14 +34,14 @@ void BikeScreen::draw()
 }
 
 // 5x5 icon with the value right-aligned just before it
-void BikeScreen::drawCount(const uint16_t *icon, int value, int16_t y)
+void BikeScreen::drawCount(const Bitmap &icon, int value, int16_t y)
 {
     Adafruit_Protomatter &gfx = display.gfx();
     String text(value);
     int16_t x1, y1;
     uint16_t w, h;
 
-    display.drawBitmap(icon, 5, 5, 56, y);
+    display.drawBitmapCentered(icon, 56, y, ICON_SLOT, ICON_SLOT);
     gfx.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
     gfx.setCursor(54 - w, y + 4);
     gfx.setTextColor(display.color(255, 255, 255));

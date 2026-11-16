@@ -1,6 +1,7 @@
 #include "DisplayManager.h"
 #include <Fonts/Picopixel.h>
 #include <math.h>
+#include "core/Color.h"
 
 namespace
 {
@@ -31,13 +32,9 @@ void DisplayManager::setBrightness(float value)
 
     // Perceptual dimming: brightness acts on lightness rather than raw LED duty
     float factor = powf(brightness, 1.0f / GAMMA);
-    lut[0] = 0;
-    for (int i = 1; i < 256; i++)
+    for (int i = 0; i < 256; i++)
     {
-        // Round to the nearest level the matrix can show (it would truncate otherwise),
-        // and keep lit pixels at least one level up so they never vanish when dimmed
-        int level = lroundf(i * factor / levelStep) * levelStep;
-        lut[i] = constrain(level, brightness > 0 ? levelStep : 0, 255);
+        lut[i] = core::quantizedLevel(i, factor, levelStep);
     }
 }
 
@@ -51,14 +48,14 @@ uint16_t DisplayManager::scale565(uint16_t c) const
     return color(((c >> 11) & 0x1F) << 3, ((c >> 5) & 0x3F) << 2, (c & 0x1F) << 3);
 }
 
-void DisplayManager::drawBitmap(const uint16_t *bitmap, int16_t w, int16_t h, int16_t x, int16_t y)
+void DisplayManager::drawBitmap(const Bitmap &bitmap, int16_t x, int16_t y)
 {
     matrix->startWrite();
-    for (int16_t row = 0; row < h; row++)
+    for (int16_t row = 0; row < bitmap.height; row++)
     {
-        for (int16_t col = 0; col < w; col++)
+        for (int16_t col = 0; col < bitmap.width; col++)
         {
-            uint16_t c = pgm_read_word(&bitmap[row * w + col]);
+            uint16_t c = pgm_read_word(&bitmap.pixels[row * bitmap.width + col]);
             if (c)
             {
                 matrix->writePixel(x + col, y + row, scale565(c));
@@ -66,6 +63,11 @@ void DisplayManager::drawBitmap(const uint16_t *bitmap, int16_t w, int16_t h, in
         }
     }
     matrix->endWrite();
+}
+
+void DisplayManager::drawBitmapCentered(const Bitmap &bitmap, int16_t x, int16_t y, int16_t w, int16_t h)
+{
+    drawBitmap(bitmap, x + (w - bitmap.width) / 2, y + (h - bitmap.height) / 2);
 }
 
 void DisplayManager::clear()
@@ -109,15 +111,21 @@ void DisplayManager::drawStaleMarker()
     matrix->drawPixel(matrix->width() - 1, 0, color(255, 0, 0));
 }
 
+void DisplayManager::drawPauseMarker()
+{
+    matrix->drawPixel(0, 0, color(0, 120, 255));
+}
+
+namespace
+{
+    constexpr int16_t BANNER_TOP = 23;
+}
+
 // Bottom banner with the brightness percentage and a gauge, drawn over the current screen
 void DisplayManager::drawBrightnessOverlay(float level)
 {
-    constexpr int16_t TOP = 23;
     constexpr int16_t BAR_X = 20, BAR_Y = 26, BAR_W = 41, BAR_H = 4;
-    int16_t width = matrix->width();
-
-    matrix->fillRect(0, TOP, width, matrix->height() - TOP, 0);
-    matrix->drawFastHLine(0, TOP, width, color(60, 60, 60));
+    clearBanner();
 
     matrix->setFont(&Picopixel);
     matrix->setTextSize(1);
@@ -127,4 +135,20 @@ void DisplayManager::drawBrightnessOverlay(float level)
 
     matrix->drawRect(BAR_X, BAR_Y, BAR_W, BAR_H, color(90, 90, 90));
     matrix->fillRect(BAR_X + 1, BAR_Y + 1, lroundf((BAR_W - 2) * level), BAR_H - 2, color(255, 200, 0));
+}
+
+// Bottom banner with a short centered text, drawn over the current screen
+void DisplayManager::drawBanner(const char *text)
+{
+    clearBanner();
+    matrix->setFont(&Picopixel);
+    matrix->setTextSize(1);
+    matrix->setTextColor(color(255, 255, 255));
+    drawCentered(text, 30);
+}
+
+void DisplayManager::clearBanner()
+{
+    matrix->fillRect(0, BANNER_TOP, matrix->width(), matrix->height() - BANNER_TOP, 0);
+    matrix->drawFastHLine(0, BANNER_TOP, matrix->width(), color(60, 60, 60));
 }

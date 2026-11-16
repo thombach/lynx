@@ -1,6 +1,21 @@
 #include "ForecastWeatherScreen.h"
 #include <Fonts/Picopixel.h>
 #include "WeatherIcons.h"
+#include "core/Color.h"
+
+namespace
+{
+    constexpr int16_t COLUMN_WIDTH = 32;
+    constexpr int16_t DAY_BASELINE = 6;
+    constexpr int16_t ICON_TOP = 8;
+    constexpr int16_t TEMPERATURE_BASELINE = 29;
+    constexpr int16_t TEMPERATURE_GAP = 3; // Between min and max
+
+    String temperatureText(float value)
+    {
+        return String((int)roundf(value));
+    }
+}
 
 void ForecastWeatherScreen::draw()
 {
@@ -12,36 +27,35 @@ void ForecastWeatherScreen::draw()
 
     WeatherData data = weather.get();
     Adafruit_Protomatter &gfx = display.gfx();
-    uint16_t white = display.color(255, 255, 255);
-    uint16_t minColor = display.color(0, 207, 255);
-    uint16_t maxColor = display.color(255, 64, 0);
     struct tm now;
     bool hasTime = time.now(now);
 
     gfx.setFont(&Picopixel);
     gfx.setTextSize(1);
 
-    // One row per day: today on top, tomorrow below
+    // One column per day: tomorrow on the left, the day after on the right
     for (int day = 0; day < 2; day++)
     {
         const DailyForecast &forecast = data.days[day];
-        int16_t top = day * 16;
-
-        display.drawBitmap(weatherIcon(forecast.weatherCode, false), 16, 16, 2, top);
+        const int16_t left = day * COLUMN_WIDTH;
 
         if (hasTime)
         {
-            gfx.setTextColor(white);
-            gfx.setCursor(20, top + 10);
-            gfx.print(TimeManager::weekdayName(now.tm_wday + day));
+            String name = TimeManager::weekdayName(now.tm_wday + day + 1);
+            gfx.setTextColor(display.color(120, 120, 120));
+            gfx.setCursor(left + (COLUMN_WIDTH - textWidth(name)) / 2, DAY_BASELINE);
+            gfx.print(name);
         }
 
-        drawTemperature(forecast.minTemperature, 36, top + 6, minColor);
-        drawTemperature(forecast.maxTemperature, 36, top + 13, maxColor);
+        display.drawBitmapCentered(weatherIcon(forecast.weatherCode, false), left, ICON_TOP, COLUMN_WIDTH,
+                                   WEATHER_ICON_SLOT);
 
-        gfx.setTextColor(white);
-        gfx.setCursor(47, top + 10);
-        gfx.print(String((int)roundf(forecast.precipitationSum)) + " m");
+        // "min° max°" on one line, centered
+        int16_t minWidth = temperatureWidth(forecast.minTemperature);
+        int16_t total = minWidth + TEMPERATURE_GAP + temperatureWidth(forecast.maxTemperature);
+        int16_t x = left + (COLUMN_WIDTH - total) / 2;
+        drawTemperature(forecast.minTemperature, x, TEMPERATURE_BASELINE);
+        drawTemperature(forecast.maxTemperature, x + minWidth + TEMPERATURE_GAP, TEMPERATURE_BASELINE);
     }
 
     if (weather.isStale())
@@ -50,11 +64,26 @@ void ForecastWeatherScreen::draw()
     }
 }
 
-void ForecastWeatherScreen::drawTemperature(float value, int16_t x, int16_t y, uint16_t color)
+int16_t ForecastWeatherScreen::textWidth(const String &text)
+{
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.gfx().getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+    return x1 + w;
+}
+
+// Digits, a one-pixel gap and the one-pixel degree sign
+int16_t ForecastWeatherScreen::temperatureWidth(float value)
+{
+    return textWidth(temperatureText(value)) + 2;
+}
+
+void ForecastWeatherScreen::drawTemperature(float value, int16_t x, int16_t baseline)
 {
     Adafruit_Protomatter &gfx = display.gfx();
+    uint16_t color = display.color(core::temperatureColor(value));
     gfx.setTextColor(color);
-    gfx.setCursor(x, y);
-    gfx.print((int)roundf(value));
-    gfx.drawPixel(gfx.getCursorX(), y - 4, color); // Degree sign
+    gfx.setCursor(x, baseline);
+    gfx.print(temperatureText(value));
+    gfx.drawPixel(gfx.getCursorX(), baseline - 4, color); // Degree sign
 }

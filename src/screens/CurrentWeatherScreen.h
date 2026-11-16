@@ -15,6 +15,4 @@ private:
     DisplayManager &display;
     WeatherManager &weather;
     AirQualityManager &airQuality;
-
-    uint16_t aqiColor(int aqi) const;
 };

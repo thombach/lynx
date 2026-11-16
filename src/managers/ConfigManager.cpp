@@ -1,5 +1,6 @@
 #include "ConfigManager.h"
 #include <LittleFS.h>
+#include "core/TimeMath.h"
 
 namespace
 {
@@ -9,24 +10,12 @@ namespace
     constexpr const char *SECRET_MASK = "********";
     constexpr const char *SECRET_KEYS[] = {"wifi_password", "admin_password", "api_transport_password"};
     constexpr const char *DEFAULT_TIMEZONE = "CET-1CEST,M3.5.0,M10.5.0/3"; // Europe/Paris
-    constexpr const char *DEFAULT_SCREENS[] = {"clock", "weather", "forecast", "bike", "transport"};
+    constexpr const char *DEFAULT_SCREENS[] = {"clock", "weather", "forecast", "hourly", "sun", "bike", "transport"};
     constexpr uint32_t MIN_SCREEN_DURATION = 1000;
 
     bool mount(bool formatOnFail)
     {
         return LittleFS.begin(formatOnFail, "/littlefs", 10, PARTITION);
-    }
-
-    // "HH:MM" -> minutes since midnight, -1 if missing or invalid
-    int parseTime(const char *value)
-    {
-        int hours, minutes;
-        if (!value || sscanf(value, "%d:%d", &hours, &minutes) != 2 ||
-            hours < 0 || hours > 23 || minutes < 0 || minutes > 59)
-        {
-            return -1;
-        }
-        return hours * 60 + minutes;
     }
 }
 
@@ -86,9 +75,10 @@ void ConfigManager::apply(const JsonDocument &doc)
     latitude = doc["latitude"] | NAN;
     longitude = doc["longitude"] | NAN;
     timezone = doc["timezone"] | DEFAULT_TIMEZONE;
-    nightStart = parseTime(doc["night_start"].as<const char *>());
-    nightEnd = parseTime(doc["night_end"].as<const char *>());
+    nightStart = core::parseClock(doc["night_start"].as<const char *>());
+    nightEnd = core::parseClock(doc["night_end"].as<const char *>());
     nightBrightness = constrain(doc["night_brightness"] | 0.0f, 0.0f, 1.0f);
+    tapThreshold = constrain(doc["tap_threshold"] | 60, 0, 127);
     apiBikeStationId = doc["api_bike_station_id"] | 0;
     apiTransportStopId1 = doc["api_transport_stop_id_1"] | 0;
     apiTransportStopId2 = doc["api_transport_stop_id_2"] | 0;

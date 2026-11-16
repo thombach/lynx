@@ -22,7 +22,7 @@ void CurrentWeatherScreen::draw()
     int16_t x1, y1;
     uint16_t w, h;
 
-    display.drawBitmap(weatherIcon(data.weatherCode, !data.isDay), 16, 16, 9, 7);
+    display.drawBitmapCentered(weatherIcon(data.weatherCode, !data.isDay), 9, 7, WEATHER_ICON_SLOT, WEATHER_ICON_SLOT);
 
     // Temperature
     String temperature = String((int)roundf(data.temperature));
@@ -44,7 +44,7 @@ void CurrentWeatherScreen::draw()
     String aqiStr = hasAqi ? String(aqi) : String("--");
     gfx.getTextBounds(aqiStr, 0, 0, &x1, &y1, &w, &h);
     gfx.setCursor(gfx.width() - RIGHT_MARGIN - (w + UNIT_WIDTH), 21 - h / 2 - y1);
-    gfx.setTextColor(hasAqi ? aqiColor(aqi) : white);
+    gfx.setTextColor(hasAqi ? display.color(core::aqiColor(aqi)) : white);
     gfx.print(aqiStr);
 
     gfx.setFont(&Picopixel);
@@ -56,19 +56,4 @@ void CurrentWeatherScreen::draw()
     {
         display.drawStaleMarker();
     }
-}
-
-uint16_t CurrentWeatherScreen::aqiColor(int aqi) const
-{
-    if (aqi < 20)
-        return display.color(0, 255, 0); // Good
-    if (aqi < 40)
-        return display.color(255, 255, 0); // Fair
-    if (aqi < 60)
-        return display.color(255, 128, 0); // Moderate
-    if (aqi < 80)
-        return display.color(255, 0, 0); // Poor
-    if (aqi < 100)
-        return display.color(255, 0, 255); // Very poor
-    return display.color(0, 0, 255);       // Extremely poor
 }

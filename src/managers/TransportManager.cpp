@@ -1,25 +1,12 @@
 #include "TransportManager.h"
 #include "ConfigManager.h"
+#include "core/TimeMath.h"
 #include "net/Http.h"
 
 namespace
 {
     constexpr const char *DEPARTURES_URL = "https://data.grandlyon.com/fr/datapusher/ws/rdata/tcl_sytral.tclpassagearret/all.json";
     constexpr const char *ALERTS_URL = "https://data.grandlyon.com/fr/datapusher/ws/rdata/tcl_sytral.tclalertetrafic_2/all.json";
-
-    time_t parseLocalTime(const char *text)
-    {
-        struct tm t = {};
-        if (sscanf(text, "%d-%d-%d %d:%d:%d", &t.tm_year, &t.tm_mon, &t.tm_mday,
-                   &t.tm_hour, &t.tm_min, &t.tm_sec) != 6)
-        {
-            return 0;
-        }
-        t.tm_year -= 1900;
-        t.tm_mon -= 1;
-        t.tm_isdst = -1;
-        return mktime(&t);
-    }
 
     void insertSorted(StopDepartures &stop, JsonObjectConst obj)
     {
@@ -40,7 +27,7 @@ namespace
         }
         Departure &departure = stop.next[pos];
         departure.time = time;
-        departure.at = parseLocalTime(time);
+        departure.at = core::parseLocalDateTime(time);
         departure.label = obj["delaipassage"] | "";
         stop.count = min(stop.count + 1, MAX_DEPARTURES);
 
@@ -59,9 +46,11 @@ bool TransportManager::fetch()
         return false;
     }
 
-    // Alerts are secondary: keep the last known state if they can't be fetched
-    bool disrupted;
-    data.disrupted = fetchDisrupted(disrupted) ? disrupted : get().disrupted;
+    // Alerts are secondary: keep the last known ones if they can't be fetched
+    if (!fetchAlerts(data.alerts))
+    {
+        data.alerts = get().alerts;
+    }
 
     publish(data);
     return true;
@@ -110,19 +99,44 @@ bool TransportManager::fetchDepartures(TransportData &data)
     return true;
 }
 
-bool TransportManager::fetchDisrupted(bool &disrupted)
+bool TransportManager::fetchAlerts(String &alerts)
 {
     const ConfigManager &config = ConfigManager::getInstance();
     String url = String(ALERTS_URL) + "?ligne_cli__eq=" + config.apiTransportLigneCli;
 
     JsonDocument filter;
-    filter["values"].add<JsonObject>()["ligne_cli"] = true;
+    JsonObject item = filter["values"].add<JsonObject>();
+    item["titre"] = true;
+    item["message"] = true;
+    item["debut"] = true;
+    item["fin"] = true;
 
     JsonDocument doc;
     if (!Http::getJson(url, doc, filter, config.apiTransportUsername.c_str(), config.apiTransportPassword.c_str()))
     {
         return false;
     }
-    disrupted = doc["values"].size() > 0;
+
+    // The dataset also lists planned alerts: keep the ones in effect now
+    time_t now = time(nullptr);
+    bool clockSynced = now > 1700000000;
+    alerts = "";
+    for (JsonObjectConst alert : doc["values"].as<JsonArrayConst>())
+    {
+        time_t start = core::parseLocalDateTime(alert["debut"].as<const char *>());
+        time_t end = core::parseLocalDateTime(alert["fin"].as<const char *>());
+        if (clockSynced && ((start && now < start) || (end && now > end)))
+        {
+            continue;
+        }
+
+        const char *title = alert["titre"] | "";
+        String text = *title ? title : (alert["message"] | "");
+        text.trim();
+        if (!text.isEmpty() && alerts.indexOf(text) < 0)
+        {
+            alerts += alerts.isEmpty() ? text : " | " + text;
+        }
+    }
     return true;
 }

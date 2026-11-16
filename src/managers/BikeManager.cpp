@@ -22,8 +22,7 @@ bool BikeManager::fetch()
     JsonObjectConst values = doc["values"][0];
     if (values.isNull())
     {
-        Serial.println("[bike] Station not found");
-        return false;
+        return fail("Station not found");
     }
 
     BikeData data;

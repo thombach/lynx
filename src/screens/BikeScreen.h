@@ -16,5 +16,5 @@ private:
     BikeManager &bikes;
     ScrollText stationName{60};
 
-    void drawCount(const uint16_t *icon, int value, int16_t y);
+    void drawCount(const Bitmap &icon, int value, int16_t y);
 };

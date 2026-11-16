@@ -21,6 +21,11 @@ public:
         return running;
     }
 
+    void stop() { running = false; }
+
+    uint32_t elapsed() const { return millis() - startedAt; }
+    uint32_t total() const { return duration; }
+
 private:
     uint32_t startedAt = 0;
     uint32_t duration = 0;

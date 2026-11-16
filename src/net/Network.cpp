@@ -12,6 +12,16 @@ namespace
     constexpr uint32_t CONNECT_TIMEOUT_MS = 30000;
     constexpr uint32_t RESTART_DELAY_MS = 1000;
     constexpr const char *ADMIN_USER = "admin";
+    constexpr size_t MAX_MESSAGE_LENGTH = 500;
+    constexpr uint32_t DEFAULT_MESSAGE_S = 15;
+    constexpr uint32_t MAX_MESSAGE_S = 600;
+}
+
+void Network::setFrameSource(const uint16_t *buffer, uint16_t width, uint16_t height)
+{
+    frame = buffer;
+    frameWidth = width;
+    frameHeight = height;
 }
 
 void Network::begin()
@@ -85,6 +95,14 @@ void Network::startServices()
               { handleGetConfig(); });
     server.on("/config", HTTP_POST, [this]
               { handlePostConfig(); });
+    server.on("/status.json", HTTP_GET, [this]
+              { handleStatus(); });
+    server.on("/screen", HTTP_GET, [this]
+              { handleScreen(); });
+    server.on("/message", HTTP_POST, [this]
+              { handleMessage(); });
+    server.on("/brightness", HTTP_POST, [this]
+              { handleBrightness(); });
     server.on("/update", HTTP_POST, [this]
               { handleFirmwareDone(); }, [this]
               { handleFirmwareUpload(); });
@@ -186,15 +204,146 @@ void Network::handlePostConfig()
     {
         response["ok"] = true;
         scheduleRestart();
+        sendJson(200, response);
     }
     else
     {
         response["error"] = error;
+        sendJson(400, response);
+    }
+}
+
+void Network::sendJson(int code, const JsonDocument &doc)
+{
+    String body;
+    serializeJson(doc, body);
+    server.send(code, "application/json", body);
+}
+
+void Network::handleStatus()
+{
+    if (!authorize())
+    {
+        return;
     }
 
-    String body;
-    serializeJson(response, body);
-    server.send(error.isEmpty() ? 200 : 400, "application/json", body);
+    JsonDocument doc;
+    JsonObject wifi = doc["wifi"].to<JsonObject>();
+    wifi["connected"] = isConnected();
+    wifi["ssid"] = WiFi.SSID();
+    wifi["rssi"] = WiFi.RSSI();
+    wifi["ip"] = WiFi.localIP().toString();
+    wifi["portal"] = portalActive;
+    if (statusCallback)
+    {
+        statusCallback(doc.as<JsonObject>());
+    }
+    sendJson(200, doc);
+}
+
+// Raw little-endian RGB565 pixels of the last frame shown
+void Network::handleScreen()
+{
+    if (!authorize())
+    {
+        return;
+    }
+    if (!frame)
+    {
+        server.send(503, "text/plain", "No frame");
+        return;
+    }
+    server.sendHeader("X-Width", String(frameWidth));
+    server.sendHeader("X-Height", String(frameHeight));
+    server.sendHeader("Cache-Control", "no-store");
+    server.send_P(200, "application/octet-stream", (const char *)frame, frameWidth * frameHeight * sizeof(uint16_t));
+}
+
+// Accepts JSON {"text": ..., "duration": seconds, "color": "#rrggbb"}, the same fields
+// as form data, or a plain text body
+void Network::handleMessage()
+{
+    if (!authorize())
+    {
+        return;
+    }
+
+    JsonDocument doc;
+    if (server.hasArg("text"))
+    {
+        doc["text"] = server.arg("text");
+        long duration = server.arg("duration").toInt();
+        if (duration > 0)
+        {
+            doc["duration"] = duration;
+        }
+        doc["color"] = server.arg("color");
+    }
+    else
+    {
+        String body = server.arg("plain");
+        if (deserializeJson(doc, body) || !doc.is<JsonObject>())
+        {
+            doc.clear();
+            doc["text"] = body;
+        }
+    }
+
+    Message message;
+    message.text = doc["text"] | "";
+    message.text.trim();
+    message.duration = constrain(doc["duration"] | DEFAULT_MESSAGE_S, 1u, MAX_MESSAGE_S) * 1000;
+    message.color = {255, 255, 255};
+    core::parseHexColor(doc["color"].as<const char *>(), message.color);
+
+    JsonDocument response;
+    if (message.text.isEmpty() || message.text.length() > MAX_MESSAGE_LENGTH)
+    {
+        response["error"] = "text is required, up to " + String(MAX_MESSAGE_LENGTH) + " characters";
+        sendJson(400, response);
+        return;
+    }
+
+    if (messageCallback)
+    {
+        messageCallback(message);
+    }
+    response["ok"] = true;
+    sendJson(200, response);
+}
+
+// Accepts JSON {"brightness": 0.05-1.0} or the same field as form data
+void Network::handleBrightness()
+{
+    if (!authorize())
+    {
+        return;
+    }
+
+    float value = NAN;
+    if (server.hasArg("brightness"))
+    {
+        value = server.arg("brightness").toFloat();
+    }
+    else
+    {
+        JsonDocument doc;
+        if (!deserializeJson(doc, server.arg("plain")) && doc["brightness"].is<float>())
+        {
+            value = doc["brightness"].as<float>();
+        }
+    }
+
+    JsonDocument response;
+    // Rounded to 5% steps by the callback: accept anything that rounds into the range
+    if (!(value >= 0.025f && value <= 1.025f) || !brightnessCallback)
+    {
+        response["error"] = "brightness must be between 0.05 and 1.0";
+        sendJson(400, response);
+        return;
+    }
+    response["brightness"] = brightnessCallback(value);
+    sendJson(200, response);
 }
 
 // Called for each chunk of the uploaded file, before handleFirmwareDone()

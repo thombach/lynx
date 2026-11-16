@@ -1,5 +1,6 @@
 #include "TransportScreen.h"
 #include <Fonts/Picopixel.h>
+#include "core/TimeMath.h"
 #include "managers/ConfigManager.h"
 #include "ui/Text.h"
 
@@ -7,7 +8,8 @@ namespace
 {
     constexpr int16_t ROW_HEIGHT = 17;
     constexpr int16_t BADGE_SIZE = 11;
-    constexpr long DEPARTED_GRACE_S = 30;
+    constexpr uint32_t DEPARTURES_VIEW_MS = 8000;
+    constexpr uint32_t ALERTS_VIEW_MS = 12000;
 
     // Countdown from the scheduled time so it stays accurate between syncs
     String formatDeparture(const Departure &departure, time_t now)
@@ -16,21 +18,19 @@ namespace
         {
             return departure.label;
         }
-        long seconds = departure.at - now;
-        if (seconds < -DEPARTED_GRACE_S)
+        long minutes = core::minutesUntil(departure.at, now);
+        if (minutes < 0)
         {
             return "";
         }
-        if (seconds < 60)
-        {
-            return "Proche";
-        }
-        return String(seconds / 60) + " min";
+        return minutes == 0 ? String("Proche") : String(minutes) + " min";
     }
 }
 
 void TransportScreen::onShow()
 {
+    shownAt = millis();
+    showingAlert = false;
     direction1.reset();
     direction2.reset();
 }
@@ -44,18 +44,39 @@ void TransportScreen::draw()
     }
 
     TransportData data = transport.get();
-    time_t now = time.epoch();
-
-    drawStop(data.stops[0], 0, data.disrupted, now);
-    if (ConfigManager::getInstance().apiTransportStopId2 > 0)
+    bool alertView = data.disrupted() &&
+                     (millis() - shownAt) % (DEPARTURES_VIEW_MS + ALERTS_VIEW_MS) >= DEPARTURES_VIEW_MS;
+    if (alertView != showingAlert)
     {
-        display.gfx().drawFastHLine(0, 16, display.gfx().width(), display.color(30, 30, 30));
-        drawStop(data.stops[1], 1, data.disrupted, now);
+        showingAlert = alertView;
+        alertText.reset();
+        direction1.reset();
+        direction2.reset();
+    }
+
+    if (alertView)
+    {
+        drawAlerts(data.alerts);
+    }
+    else
+    {
+        drawDepartures(data);
     }
 
     if (transport.isStale())
     {
         display.drawStaleMarker();
+    }
+}
+
+void TransportScreen::drawDepartures(const TransportData &data)
+{
+    time_t now = time.epoch();
+    drawStop(data.stops[0], 0, data.disrupted(), now);
+    if (ConfigManager::getInstance().apiTransportStopId2 > 0)
+    {
+        display.gfx().drawFastHLine(0, 16, display.gfx().width(), display.color(30, 30, 30));
+        drawStop(data.stops[1], 1, data.disrupted(), now);
     }
 }
 
@@ -73,7 +94,7 @@ void TransportScreen::drawStop(const StopDepartures &stop, int index, bool disru
         direction = "! " + direction;
     }
     ScrollText &scroll = index == 0 ? direction1 : direction2;
-    scroll.draw(display, direction, 15, top + 6, disrupted ? display.color(255, 0, 0) : white);
+    scroll.draw(display, direction, 15, top + 1, disrupted ? display.color(255, 0, 0) : white);
 
     String times;
     int shown = 0;
@@ -92,6 +113,20 @@ void TransportScreen::drawStop(const StopDepartures &stop, int index, bool disru
     gfx.setTextColor(white);
     gfx.setCursor(15, top + 12);
     gfx.print(times.isEmpty() ? "--" : times);
+}
+
+void TransportScreen::drawAlerts(const String &alerts)
+{
+    Adafruit_Protomatter &gfx = display.gfx();
+    drawLineBadge(2, 2);
+
+    gfx.setFont(&Picopixel);
+    gfx.setTextSize(1);
+    gfx.setTextColor(display.color(255, 0, 0));
+    gfx.setCursor(16, 9);
+    gfx.print("Info trafic");
+
+    alertText.draw(display, toAscii(alerts), 0, 19, display.color(255, 120, 0));
 }
 
 // Rounded badge in the line's color with its name

@@ -2,8 +2,11 @@
 #include <Arduino.h>
 #include "bitmap.h"
 
-// 16x16 icon for a WMO weather code
-inline const uint16_t *weatherIcon(int code, bool night)
+// Weather icons fit in a 16x16 slot
+constexpr int16_t WEATHER_ICON_SLOT = 16;
+
+// Icon for a WMO weather code
+inline const Bitmap &weatherIcon(int code, bool night)
 {
     switch (code)
     {

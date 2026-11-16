@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_Protomatter.h>
+#include <Fonts/Picopixel.h>
+#include <esp_timer.h>
 #include <algorithm>
 #include <atomic>
 #include <vector>
@@ -16,15 +18,29 @@
 #include "screens/ClockScreen.h"
 #include "screens/CurrentWeatherScreen.h"
 #include "screens/ForecastWeatherScreen.h"
+#include "screens/HourlyScreen.h"
+#include "screens/SunScreen.h"
 #include "screens/TransportScreen.h"
+#include "ui/BootAnimation.h"
 #include "ui/Button.h"
+#include "ui/ScrollText.h"
+#include "ui/TapSensor.h"
+#include "ui/Text.h"
+#include "ui/Transition.h"
 #include "util/Timer.h"
+
+#ifndef LYNX_VERSION
+#define LYNX_VERSION "dev"
+#endif
 
 namespace
 {
     constexpr uint32_t FRAME_MS = 40;
-    constexpr uint32_t SPLASH_MS = 1500;
-    constexpr uint32_t BRIGHTNESS_OVERLAY_MS = 1500;
+    constexpr uint32_t OVERLAY_MS = 1500;
+    // Pressing or releasing a button also shakes the case: a tap gesture is only accepted
+    // once it has been confirmed that no button was touched around it
+    constexpr uint32_t TAP_CONFIRM_MS = 120;
+    constexpr uint32_t TAP_BUTTON_QUIET_MS = 600;
     constexpr uint32_t FETCH_PERIOD_MS = 1000;
     constexpr uint32_t FETCH_STACK_SIZE = 16384;
 
@@ -41,6 +57,8 @@ namespace
     TimeManager timeManager;
     BrightnessManager brightness(timeManager);
     Network network;
+    Transition transition;
+    TapSensor tapSensor;
 
     WeatherManager weather;
     AirQualityManager airQuality;
@@ -50,6 +68,8 @@ namespace
     ClockScreen clockScreen(display, timeManager);
     CurrentWeatherScreen currentWeatherScreen(display, weather, airQuality);
     ForecastWeatherScreen forecastWeatherScreen(display, weather, timeManager);
+    HourlyScreen hourlyScreen(display, weather);
+    SunScreen sunScreen(display, weather);
     BikeScreen bikeScreen(display, bikes);
     TransportScreen transportScreen(display, transport, timeManager);
 
@@ -58,6 +78,7 @@ namespace
 
     struct Slot
     {
+        const char *name;
         Screen *screen;
         uint32_t duration;
     };
@@ -65,8 +86,16 @@ namespace
     std::vector<Manager *> managers;
     size_t currentSlot = 0;
     uint32_t shownAt = 0;
+    bool paused = false; // Rotation stopped on the current screen
+    core::Gesture pendingGesture = core::Gesture::None;
     Timer brightnessOverlay;
+    Timer pauseOverlay;
     std::atomic<bool> updating{false};
+
+    Message message;
+    Timer messageTimer;
+    ScrollText messageText{64, ScrollText::Font::Large, ScrollText::Mode::Marquee};
+    bool wasShowingMessage = false;
 
     // Builds the screen rotation from the config and enables only the managers it needs
     void setupRotation()
@@ -82,6 +111,8 @@ namespace
             {"clock", &clockScreen, true, {}},
             {"weather", &currentWeatherScreen, config.hasWeather(), {&weather, &airQuality}},
             {"forecast", &forecastWeatherScreen, config.hasWeather(), {&weather}},
+            {"hourly", &hourlyScreen, config.hasWeather(), {&weather}},
+            {"sun", &sunScreen, config.hasWeather(), {&weather}},
             {"bike", &bikeScreen, config.hasBike(), {&bikes}},
             {"transport", &transportScreen, config.hasTransport(), {&transport}},
         };
@@ -102,7 +133,7 @@ namespace
                 continue;
             }
 
-            rotation.push_back({match->screen, entry.duration});
+            rotation.push_back({match->name, match->screen, entry.duration});
             for (Manager *manager : match->needs)
             {
                 if (std::find(managers.begin(), managers.end(), manager) == managers.end())
@@ -114,7 +145,7 @@ namespace
 
         if (rotation.empty())
         {
-            rotation.push_back({&clockScreen, config.screenInterval});
+            rotation.push_back({"clock", &clockScreen, config.screenInterval});
         }
     }
 
@@ -134,56 +165,173 @@ namespace
         }
     }
 
-    void showSlot(size_t index)
+    void showSlot(size_t index, const char *reason)
     {
+        transition.start();
         currentSlot = index % rotation.size();
+        Serial.printf("[screens] %s (%s)\n", rotation[currentSlot].name, reason);
         shownAt = millis();
         rotation[currentSlot].screen->onShow();
     }
 
-    void handleButtons()
+    void showBrightness()
+    {
+        pauseOverlay.stop();
+        brightnessOverlay.start(OVERLAY_MS);
+    }
+
+    void togglePause()
+    {
+        paused = !paused;
+        Serial.printf("[screens] %s\n", paused ? "Paused" : "Resumed");
+        shownAt = millis(); // The current screen gets a full duration on resume
+        brightnessOverlay.stop();
+        pauseOverlay.start(OVERLAY_MS);
+    }
+
+    // Tap gesture, once confirmed that it doesn't come from a button
+    core::Gesture readGesture(uint32_t now)
+    {
+        core::Gesture gesture = tapSensor.poll();
+        if (gesture != core::Gesture::None)
+        {
+            pendingGesture = gesture;
+        }
+        if (pendingGesture == core::Gesture::None)
+        {
+            return core::Gesture::None;
+        }
+
+        // Any button contact from shortly before the first tap until now
+        uint32_t window = now - tapSensor.startedAt() + TAP_BUTTON_QUIET_MS;
+        if (upButton.isTouched() || downButton.isTouched() ||
+            now - upButton.lastChangeAt() < window || now - downButton.lastChangeAt() < window)
+        {
+            pendingGesture = core::Gesture::None;
+            return core::Gesture::None;
+        }
+        if (now - tapSensor.endedAt() < TAP_CONFIRM_MS)
+        {
+            return core::Gesture::None;
+        }
+        gesture = pendingGesture;
+        pendingGesture = core::Gesture::None;
+        return gesture;
+    }
+
+    void handleInput()
     {
         bool up = upButton.pressed();
         bool down = downButton.pressed();
-        if (!up && !down)
+        core::Gesture gesture = readGesture(millis());
+
+        if (!up && !down && gesture == core::Gesture::None)
         {
             return;
         }
+
         if (brightness.wake())
         {
-            return; // During night mode, the first press only lights the display up
+            return; // During night mode, the first action only lights the display up
         }
-        if (up)
+        if (up || down)
         {
-            brightness.cycle();
-            brightnessOverlay.start(BRIGHTNESS_OVERLAY_MS);
+            // Adjusting the brightness keeps a message on screen
+            brightness.step((up ? 1 : 0) - (down ? 1 : 0));
+            showBrightness();
+            return;
         }
-        if (down)
+        if (messageTimer.isRunning())
         {
-            showSlot(currentSlot + 1);
+            messageTimer.stop(); // Any tap dismisses the message
+            return;
+        }
+        if (gesture == core::Gesture::Double)
+        {
+            togglePause();
+        }
+        else
+        {
+            showSlot(currentSlot + 1, "tap");
         }
     }
 
-    void drawSplash()
+    // Brightness set from the web page
+    float setBrightness(float value)
+    {
+        brightness.setUserLevel(value);
+        brightness.wake(); // Shows the new level during night mode
+        showBrightness();
+        return brightness.userLevel();
+    }
+
+    void showMessage(const Message &received)
+    {
+        Serial.printf("[message] %s\n", received.text.c_str());
+        message = received;
+        message.text = toAscii(message.text);
+        messageText.reset();
+        messageTimer.start(message.duration);
+        brightness.wake();
+        transition.start();
+    }
+
+    void drawPostedMessage()
     {
         Adafruit_Protomatter &gfx = display.gfx();
-        const char *text = "Lynx";
-        const uint16_t colors[] = {display.color(0, 255, 64), display.color(255, 128, 0),
-                                   display.color(0, 64, 255), display.color(255, 0, 255)};
-        int16_t x1, y1;
-        uint16_t w, h;
+        uint16_t color = display.color(message.color);
 
-        display.clear();
-        gfx.setFont(nullptr);
+        gfx.setFont(&Picopixel);
         gfx.setTextSize(1);
-        gfx.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
-        gfx.setCursor((gfx.width() - w) / 2, (gfx.height() - h) / 2);
-        for (int i = 0; i < 4; i++)
+        gfx.setTextColor(color);
+        display.drawCentered("Message", 6);
+
+        messageText.draw(display, message.text, 0, 13, color, true);
+
+        // Remaining display time
+        float remaining = 1.0f - min(1.0f, (float)messageTimer.elapsed() / messageTimer.total());
+        gfx.drawFastHLine(0, gfx.height() - 1, lroundf(gfx.width() * remaining), color);
+    }
+
+    void fillStatus(JsonObject status)
+    {
+        status["version"] = LYNX_VERSION;
+        status["uptime"] = (uint32_t)(esp_timer_get_time() / 1000000);
+        status["heapSize"] = ESP.getHeapSize();
+        status["freeHeap"] = ESP.getFreeHeap();
+        status["minFreeHeap"] = ESP.getMinFreeHeap();
+        status["screen"] = rotation[currentSlot].name;
+        status["paused"] = paused;
+        status["brightness"] = brightness.userLevel();
+        status["night"] = brightness.isNight();
+        status["tapSensor"] = tapSensor.isAvailable();
+
+        struct tm now;
+        char time[20];
+        if (timeManager.now(now))
         {
-            gfx.setTextColor(colors[i]);
-            gfx.print(text[i]);
+            strftime(time, sizeof(time), "%Y-%m-%d %H:%M:%S", &now);
+            status["time"] = time;
         }
-        display.show();
+
+        JsonArray sources = status["sources"].to<JsonArray>();
+        for (const Manager *manager : managers)
+        {
+            ManagerStatus s = manager->status();
+            JsonObject source = sources.add<JsonObject>();
+            source["name"] = s.name;
+            source["ok"] = s.hasData;
+            source["stale"] = s.stale;
+            if (s.hasData)
+            {
+                source["lastSync"] = s.lastSuccessAgo / 1000;
+            }
+            source["failures"] = s.failures;
+            if (s.failures > 0)
+            {
+                source["error"] = s.lastError;
+            }
+        }
     }
 
     void onUpdateStart()
@@ -199,7 +347,7 @@ namespace
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("Lynx is starting...");
+    Serial.printf("Lynx %s is starting...\n", LYNX_VERSION);
 
     ProtomatterStatus status = matrix.begin();
     if (status != PROTOMATTER_OK)
@@ -212,44 +360,58 @@ void setup()
         }
     }
     display.begin(matrix, BIT_DEPTH);
+    transition.begin(matrix);
 
     bool configLoaded = config.load();
     brightness.begin();
     display.setBrightness(brightness.current());
-    drawSplash();
     if (!configLoaded)
     {
         Serial.println("No valid config, the setup portal will open");
     }
 
     network.onUpdateStart(onUpdateStart);
+    network.onMessage(showMessage);
+    network.onBrightness(setBrightness);
+    network.onStatus(fillStatus);
+    network.setFrameSource(matrix.getBuffer(), matrix.width(), matrix.height());
     network.begin();
     timeManager.begin(config.timezone);
 
     upButton.begin();
     downButton.begin();
+    tapSensor.begin(config.tapThreshold);
 
     setupRotation();
     xTaskCreatePinnedToCore(fetchTask, "fetch", FETCH_STACK_SIZE, nullptr, 1, nullptr, 0);
 
-    delay(SPLASH_MS);
-    showSlot(0);
+    // Wi-Fi connects in the background while the logo plays
+    BootAnimation::play(display);
+    showSlot(0, "boot");
 }
 
 void loop()
 {
     uint32_t frameStart = millis();
 
-    network.loop();
+    network.loop(); // Web requests see the last complete frame
     if (updating)
     {
         return;
     }
-    handleButtons();
+    handleInput();
 
-    if (millis() - shownAt >= rotation[currentSlot].duration)
+    bool showingMessage = messageTimer.isRunning();
+    if (wasShowingMessage && !showingMessage)
     {
-        showSlot(currentSlot + 1);
+        transition.start(); // Slide back to the current screen, with a fresh duration
+        shownAt = millis();
+    }
+    wasShowingMessage = showingMessage;
+
+    if (!showingMessage && !paused && millis() - shownAt >= rotation[currentSlot].duration)
+    {
+        showSlot(currentSlot + 1, "timer");
     }
 
     display.setBrightness(brightness.current());
@@ -258,13 +420,26 @@ void loop()
     {
         display.drawMessage("Wi-Fi setup", Network::AP_NAME);
     }
+    else if (showingMessage)
+    {
+        drawPostedMessage();
+    }
     else
     {
         rotation[currentSlot].screen->draw();
+        if (paused)
+        {
+            display.drawPauseMarker();
+        }
     }
+    transition.apply();
     if (brightnessOverlay.isRunning())
     {
         display.drawBrightnessOverlay(brightness.userLevel());
+    }
+    else if (pauseOverlay.isRunning())
+    {
+        display.drawBanner(paused ? "Paused" : "Resumed");
     }
     display.show();
 

@@ -22,8 +22,7 @@ bool AirQualityManager::fetch()
     JsonVariantConst aqi = doc["current"]["european_aqi"];
     if (!aqi.is<int>())
     {
-        Serial.println("[aqi] Unexpected response");
-        return false;
+        return fail("Unexpected response");
     }
 
     AirQualityData data;

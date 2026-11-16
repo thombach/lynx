@@ -38,6 +38,7 @@ public:
     int nightStart = -1; // Minutes since midnight, -1 when disabled
     int nightEnd = -1;
     float nightBrightness = 0.0f;
+    uint8_t tapThreshold = 60; // 0 disables tap detection
     int apiBikeStationId = 0;
     int apiTransportStopId1 = 0;
     int apiTransportStopId2 = 0;

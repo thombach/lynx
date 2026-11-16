@@ -4,6 +4,7 @@
 #include "managers/TimeManager.h"
 #include "managers/WeatherManager.h"
 
+// Tomorrow and the day after, side by side
 class ForecastWeatherScreen : public Screen
 {
 public:
@@ -16,5 +17,7 @@ private:
     WeatherManager &weather;
     TimeManager &time;
 
-    void drawTemperature(float value, int16_t x, int16_t y, uint16_t color);
+    int16_t textWidth(const String &text);
+    int16_t temperatureWidth(float value);
+    void drawTemperature(float value, int16_t x, int16_t baseline);
 };

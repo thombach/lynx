@@ -20,7 +20,9 @@ struct StopDepartures
 struct TransportData
 {
     StopDepartures stops[2];
-    bool disrupted = false;
+    String alerts; // Titles of the line's active alerts, empty if none
+
+    bool disrupted() const { return !alerts.isEmpty(); }
 };
 
 class TransportManager : public DataManager<TransportData>
@@ -33,5 +35,5 @@ protected:
 
 private:
     bool fetchDepartures(TransportData &data);
-    bool fetchDisrupted(bool &disrupted);
+    bool fetchAlerts(String &alerts);
 };
