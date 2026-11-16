@@ -1,29 +1,30 @@
 #pragma once
 #include <Arduino.h>
 #include <Adafruit_Protomatter.h>
-#include "ConfigManager.h"
 
 class DisplayManager
 {
 public:
-    DisplayManager();
-    void begin(Adafruit_Protomatter *matrix);
+    void begin(Adafruit_Protomatter &matrix, uint8_t bitDepth);
+    Adafruit_Protomatter &gfx() { return *matrix; }
 
-    void updateBrightness();
+    void setBrightness(float value); // 0.0 (off) to 1.0
+    uint16_t color(uint8_t r, uint8_t g, uint8_t b) const;
+    void drawBitmap(const uint16_t *bitmap, int16_t w, int16_t h, int16_t x, int16_t y);
 
-    void drawBitmap(const uint16_t *bitmap, int w, int h, int x, int y);
-
-    uint16_t color565(uint8_t r, uint8_t g, uint8_t b);
+    void clear();
+    void show();
+    // Centered message on one or two lines, used for boot, errors and empty states
+    void drawMessage(const char *line1, const char *line2 = nullptr);
+    void drawStaleMarker();
+    void drawBrightnessOverlay(float level);
 
 private:
-    Adafruit_Protomatter *matrix;
-    float brightness;
+    Adafruit_Protomatter *matrix = nullptr;
+    float brightness = -1.0f;
+    uint8_t levelStep = 1; // Smallest 8-bit channel value the matrix can show
+    uint8_t lut[256];
 
-    // LUT tables (8-bit -> gamma corrected -> scaled -> back to 8-bit)
-    uint8_t gammaLUT[256];
-    uint8_t brightnessLUT[256];
-
-    void buildLUTs();
-    uint16_t rgbTo565(uint8_t r, uint8_t g, uint8_t b);
+    uint16_t scale565(uint16_t color) const;
+    void drawCentered(const char *text, int16_t baseline);
 };
-extern DisplayManager displayManager;

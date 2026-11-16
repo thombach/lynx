@@ -1,19 +1,20 @@
 #pragma once
-
-#include <Adafruit_Protomatter.h>
-#include "../managers/WeatherManager.h"
-#include "../managers/TimeManager.h"
 #include "Screen.h"
+#include "managers/DisplayManager.h"
+#include "managers/TimeManager.h"
+#include "managers/WeatherManager.h"
 
 class ForecastWeatherScreen : public Screen
 {
 public:
-    ForecastWeatherScreen(Adafruit_Protomatter *matrix, WeatherManager *weatherManager, TimeManager *timeManager);
+    ForecastWeatherScreen(DisplayManager &display, WeatherManager &weather, TimeManager &time)
+        : display(display), weather(weather), time(time) {}
     void draw() override;
-    void update() override;
 
 private:
-    Adafruit_Protomatter *matrix;
-    WeatherManager *weatherManager;
-    TimeManager *timeManager;
+    DisplayManager &display;
+    WeatherManager &weather;
+    TimeManager &time;
+
+    void drawTemperature(float value, int16_t x, int16_t y, uint16_t color);
 };

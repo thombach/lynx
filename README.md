@@ -23,73 +23,40 @@ Lynx is a smart LED display designed to show real-time information such as the t
 - Weather and air quality: [OpenMeteo](https://open-meteo.com)
 - City bike and transport: [data.grandlyon](https://data.grandlyon.com)
 
+## Buttons
+
+- **Up**: cycle brightness (5% steps, remembered across reboots)
+- **Down**: next screen
+- During night mode, the first press only wakes the display up for a minute
+
 ## Configuration
 
-Use **PlatformIO** to open the project. Then create a configuration file at:
+The configuration lives in `config.json` on the board's flash. There are two ways to set it:
 
-```
-data/config.json
-```
+- **Web page** (recommended): browse to `http://lynx.local` (user `admin`, password `admin_password`).
+  It offers a form for every option, screen ordering, a raw JSON editor and firmware updates.
+  On first boot, or if Wi-Fi can't connect within 30 s, Lynx opens a `Lynx-Setup` Wi-Fi network:
+  join it and the same page opens (otherwise browse to `http://192.168.4.1`).
+  Saving restarts the board. Passwords left empty are kept unchanged.
+- **File**: create `data/config.json` and upload it with `pio run -t uploadfs`.
 
-The file must contain the following properties:
-
-```yml
-wifi_ssid:
-  type: string
-  description: Wi-Fi network SSID
-
-wifi_password:
-  type: string
-  description: Wi-Fi network password
-
-brightness:
-  type: float
-  description: Display brightness (range: 0.0 to 1.0)
-
-screen_interval:
-  type: integer
-  description: Time interval in milliseconds between screen changes
-
-latitude:
-  type: float
-  description: Latitude used for weather and air quality data
-
-longitude:
-  type: float
-  description: Longitude used for weather and air quality data
-
-gmt_offset:
-  type: integer
-  description: GMT offset in seconds
-
-dst_offset:
-  type: integer
-  description: Daylight saving time offset in seconds
-
-api_bike_station_id:
-  type: integer
-  description: ID of the city bike station to monitor
-
-api_transport_stop_id_1:
-  type: integer
-  description: First public transport stop ID
-
-api_transport_stop_id_2:
-  type: integer
-  description: Second public transport stop ID
-
-api_transport_ligne_cli:
-  type: string
-  description: Public transport line identifier
-
-api_transport_username:
-  type: string
-  description: Username for the public transport API
-
-api_transport_password:
-  type: string
-  description: Password for the public transport API
-```
+| Key | Type | Description |
+| --- | --- | --- |
+| `wifi_ssid` | string | **Required.** Wi-Fi network SSID |
+| `wifi_password` | string | Wi-Fi password |
+| `admin_password` | string | Protects the web page (user `admin`) and OTA updates. Strongly recommended |
+| `brightness` | float | Initial brightness, `0.05` to `1.0` (default `0.5`), until changed with the button |
+| `screen_interval` | integer | Default time per screen in ms (default `10000`) |
+| `screens` | array | Screen order: `clock`, `weather`, `forecast`, `bike`, `transport`. Each entry is a name or `{"name": ..., "duration": ms}`. Defaults to all configured screens |
+| `latitude`, `longitude` | float | Location for weather and air quality. Weather screens are disabled without them |
+| `timezone` | string | [POSIX TZ string](https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv), DST included (default `CET-1CEST,M3.5.0,M10.5.0/3`, Europe/Paris) |
+| `night_start`, `night_end` | string | Night mode window, `"HH:MM"`. Disabled if missing |
+| `night_brightness` | float | Brightness during night mode, `0` turns the display off (default `0`) |
+| `api_bike_station_id` | integer | Vélo'v station ID. Bike screen disabled without it |
+| `api_transport_stop_id_1` | integer | First stop ID. Transport screen disabled without it |
+| `api_transport_stop_id_2` | integer | Optional second stop ID (e.g. the other direction) |
+| `api_transport_ligne_cli` | string | Line name (e.g. `B`), used for alerts and the line badge |
+| `api_transport_username`, `api_transport_password` | string | data.grandlyon credentials |
 
 ### Example `config.json`
 
@@ -97,12 +64,16 @@ api_transport_password:
 {
   "wifi_ssid": "my-wifi",
   "wifi_password": "password",
-  "brightness": 1.0,
+  "admin_password": "change-me",
+  "brightness": 0.8,
   "screen_interval": 10000,
-  "latitude": 43.2726,
-  "longitude": 5.9762,
-  "gmt_offset": 3600,
-  "dst_offset": 3600,
+  "screens": ["clock", "weather", "forecast", "bike", {"name": "transport", "duration": 15000}],
+  "latitude": 45.7640,
+  "longitude": 4.8357,
+  "timezone": "CET-1CEST,M3.5.0,M10.5.0/3",
+  "night_start": "23:00",
+  "night_end": "07:00",
+  "night_brightness": 0,
   "api_bike_station_id": 10022,
   "api_transport_stop_id_1": 42732,
   "api_transport_stop_id_2": 46054,
@@ -111,3 +82,18 @@ api_transport_password:
   "api_transport_password": "password"
 }
 ```
+
+## Build and update
+
+The first flash of this firmware must be done over USB. After that, updates can go over Wi-Fi:
+
+```sh
+pio run -t upload                                        # USB
+LYNX_OTA_PASSWORD=change-me pio run -e ota -t upload     # Wi-Fi, from PlatformIO
+pio run                                                  # Or build, then install
+                                                         # .pio/build/adafruit_matrixportal_esp32s3/firmware.bin
+                                                         # from the "Firmware update" section of the web page
+pio device monitor                                       # Logs (USB)
+```
+
+A red pixel in the top-right corner means the data on screen is outdated (the last syncs failed).

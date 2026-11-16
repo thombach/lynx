@@ -1,25 +1,19 @@
 #pragma once
-#include <Arduino.h>
-#include "ConfigManager.h"
-#include "Manager.cpp"
+#include "Manager.h"
 
-class BikeManager : public Manager
+struct BikeData
+{
+    String stationName;
+    int bikes = 0;
+    int eBikes = 0;
+    int availableStands = 0;
+};
+
+class BikeManager : public DataManager<BikeData>
 {
 public:
-    int bikes;
-    int eBikes;
-    int availableStands;
-    String stationName;
+    BikeManager() : DataManager("bike", 60UL * 1000) {}
 
-    BikeManager();
-    void begin();
-    void update();
-
-private:
-    ConfigManager &config;
-    static constexpr const char *BASE_URL = "https://data.grandlyon.com/fr/datapusher/ws/rdata/jcd_jcdecaux.jcdvelov/all.json";
-    unsigned long lastSync = 0;
-    const unsigned long syncInterval = 60UL * 1000UL; // every min
-    void sync();
-    String buildURL();
+protected:
+    bool fetch() override;
 };

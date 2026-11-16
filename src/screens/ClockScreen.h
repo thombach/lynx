@@ -1,19 +1,15 @@
 #pragma once
-
-#include <Adafruit_Protomatter.h>
-#include "../managers/TimeManager.h"
 #include "Screen.h"
+#include "managers/DisplayManager.h"
+#include "managers/TimeManager.h"
 
 class ClockScreen : public Screen
 {
 public:
-  ClockScreen(Adafruit_Protomatter *matrix, TimeManager *timeManager);
-  void draw() override;
-  void update() override;
+    ClockScreen(DisplayManager &display, TimeManager &time) : display(display), time(time) {}
+    void draw() override;
 
 private:
-  Adafruit_Protomatter *matrix;
-  TimeManager *timeManager;
-  bool colonVisible = true;
-  unsigned long lastBlink = 0;
+    DisplayManager &display;
+    TimeManager &time;
 };

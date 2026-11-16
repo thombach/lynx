@@ -1,98 +1,60 @@
 #include "ForecastWeatherScreen.h"
-#include <math.h>
 #include <Fonts/Picopixel.h>
-#include <Fonts/FreeSans9pt7b.h>
-#include "managers/DisplayManager.h"
-
-ForecastWeatherScreen::ForecastWeatherScreen(Adafruit_Protomatter *m, WeatherManager *w, TimeManager *t)
-{
-    matrix = m;
-    weatherManager = w;
-    timeManager = t;
-}
+#include "WeatherIcons.h"
 
 void ForecastWeatherScreen::draw()
 {
-    matrix->fillScreen(0);
-    // Weather images
-    const uint16_t *dailyWeatherImage = weatherManager->getBitmap(weatherManager->daysWeatherCode[0], false);
-    const uint16_t *nextWeatherImage = weatherManager->getBitmap(weatherManager->daysWeatherCode[1], false);
-    displayManager.drawBitmap(dailyWeatherImage, 16, 16, 2, 0);
-    displayManager.drawBitmap(nextWeatherImage, 16, 16, 2, 16);
-
-    // Day
-    struct tm now;
-    if (!timeManager->getLocalTime(&now))
+    if (!weather.hasData())
     {
-        // couldn’t get time → skip draw
+        display.drawMessage("Loading...", "forecast");
         return;
     }
-    matrix->setTextColor(displayManager.color565(255, 255, 255));
-    matrix->setFont(&Picopixel);
-    matrix->setTextSize(1);
-    matrix->setCursor(20, 10);
-    matrix->print(timeManager->getWeekdayName(now.tm_wday));
-    matrix->setCursor(20, 26);
-    matrix->print(timeManager->getWeekdayName(now.tm_wday + 1));
 
-    // Temperature
-    int x, y;
-    String dailyMinTempStr = String(String((int)round(weatherManager->daysMinTemperature[0])));
-    String dailyMaxTempStr = String(String((int)round(weatherManager->daysMaxTemperature[0])));
-    String nextMinTempStr = String(String((int)round(weatherManager->daysMinTemperature[1])));
-    String nextMaxTempStr = String(String((int)round(weatherManager->daysMaxTemperature[1])));
-    u_int16_t minColor = displayManager.color565(0, 207, 255);
-    u_int16_t maxColor = displayManager.color565(255, 64, 0);
+    WeatherData data = weather.get();
+    Adafruit_Protomatter &gfx = display.gfx();
+    uint16_t white = display.color(255, 255, 255);
+    uint16_t minColor = display.color(0, 207, 255);
+    uint16_t maxColor = display.color(255, 64, 0);
+    struct tm now;
+    bool hasTime = time.now(now);
 
-    matrix->setFont(&Picopixel);
-    matrix->setCursor(36, 6);
-    matrix->setTextColor(minColor);
-    matrix->print(dailyMinTempStr);
-    x = matrix->getCursorX();
-    y = matrix->getCursorY();
-    matrix->drawPixel(x, y - 4, minColor);
+    gfx.setFont(&Picopixel);
+    gfx.setTextSize(1);
 
-    matrix->setCursor(36, 13);
-    matrix->setTextColor(maxColor);
-    matrix->print(dailyMaxTempStr);
-    x = matrix->getCursorX();
-    y = matrix->getCursorY();
-    matrix->drawPixel(x, y - 4, maxColor);
+    // One row per day: today on top, tomorrow below
+    for (int day = 0; day < 2; day++)
+    {
+        const DailyForecast &forecast = data.days[day];
+        int16_t top = day * 16;
 
-    matrix->setCursor(36, 22);
-    matrix->setTextColor(minColor);
-    matrix->print(nextMinTempStr);
-    x = matrix->getCursorX();
-    y = matrix->getCursorY();
-    matrix->drawPixel(x, y - 4, minColor);
+        display.drawBitmap(weatherIcon(forecast.weatherCode, false), 16, 16, 2, top);
 
-    matrix->setCursor(36, 29);
-    matrix->setTextColor(maxColor);
-    matrix->print(nextMaxTempStr);
-    x = matrix->getCursorX();
-    y = matrix->getCursorY();
-    matrix->drawPixel(x, y - 4, maxColor);
+        if (hasTime)
+        {
+            gfx.setTextColor(white);
+            gfx.setCursor(20, top + 10);
+            gfx.print(TimeManager::weekdayName(now.tm_wday + day));
+        }
 
-    // Precipitations
-    String dailyPrecipitationSumStr = String((int)round(weatherManager->daysPrecipitationSum[0])) + String(" m");
-    String nextPrecipitationSumStr = String((int)round(weatherManager->daysPrecipitationSum[1])) + String(" m");
-    matrix->setTextColor(displayManager.color565(255, 255, 255));
-    matrix->setCursor(47, 10);
-    matrix->print(dailyPrecipitationSumStr);
+        drawTemperature(forecast.minTemperature, 36, top + 6, minColor);
+        drawTemperature(forecast.maxTemperature, 36, top + 13, maxColor);
 
-    matrix->setCursor(47, 26);
-    matrix->print(nextPrecipitationSumStr);
+        gfx.setTextColor(white);
+        gfx.setCursor(47, top + 10);
+        gfx.print(String((int)roundf(forecast.precipitationSum)) + " m");
+    }
 
-    matrix->show();
-    weatherManager->setDirty(false);
+    if (weather.isStale())
+    {
+        display.drawStaleMarker();
+    }
 }
 
-void ForecastWeatherScreen::update()
+void ForecastWeatherScreen::drawTemperature(float value, int16_t x, int16_t y, uint16_t color)
 {
-    if (weatherManager->isDirty())
-    {
-        draw();
-    }
-    weatherManager->update();
-    timeManager->update();
+    Adafruit_Protomatter &gfx = display.gfx();
+    gfx.setTextColor(color);
+    gfx.setCursor(x, y);
+    gfx.print((int)roundf(value));
+    gfx.drawPixel(gfx.getCursorX(), y - 4, color); // Degree sign
 }

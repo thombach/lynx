@@ -1,17 +1,20 @@
 #pragma once
-
-#include <Adafruit_Protomatter.h>
-#include "../managers/BikeManager.h"
 #include "Screen.h"
+#include "managers/BikeManager.h"
+#include "managers/DisplayManager.h"
+#include "ui/ScrollText.h"
 
 class BikeScreen : public Screen
 {
 public:
-    BikeScreen(Adafruit_Protomatter *matrix, BikeManager *bikeManager);
+    BikeScreen(DisplayManager &display, BikeManager &bikes) : display(display), bikes(bikes) {}
+    void onShow() override { stationName.reset(); }
     void draw() override;
-    void update() override;
 
 private:
-    Adafruit_Protomatter *matrix;
-    BikeManager *bikeManager;
+    DisplayManager &display;
+    BikeManager &bikes;
+    ScrollText stationName{60};
+
+    void drawCount(const uint16_t *icon, int value, int16_t y);
 };

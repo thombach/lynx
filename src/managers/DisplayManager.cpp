@@ -1,125 +1,130 @@
 #include "DisplayManager.h"
+#include <Fonts/Picopixel.h>
 #include <math.h>
 
-DisplayManager displayManager;
-
-DisplayManager::DisplayManager()
+namespace
 {
-    matrix = nullptr;
-    brightness = 1.0f;
-}
+    constexpr float GAMMA = 2.2f;
 
-void DisplayManager::begin(Adafruit_Protomatter *m)
-{
-    matrix = m;
-    brightness = -1.0f; // force initial rebuild
-    updateBrightness();
-}
-
-void DisplayManager::updateBrightness()
-{
-    float newBrightness = ConfigManager::getInstance().brightness;
-
-    // Clamp
-    if (newBrightness < 0.0f)
-        newBrightness = 0.0f;
-    if (newBrightness > 1.0f)
-        newBrightness = 1.0f;
-
-    // Only rebuild LUTs if brightness actually changed
-    if (fabsf(newBrightness - brightness) > 0.001f)
+    uint16_t pack565(uint8_t r, uint8_t g, uint8_t b)
     {
-        brightness = newBrightness;
-        buildLUTs();
-    }
-}
-//
-// Build Gamma & Brightness LUTs
-//
-void DisplayManager::buildLUTs()
-{
-    const float gamma = 2.2f;
-
-    for (int i = 0; i < 256; i++)
-    {
-        float normalized = (float)i / 255.0f;
-
-        // Gamma correction forward
-        float g = powf(normalized, gamma);
-
-        // Brightness scaling applied TO gamma-corrected value
-        g *= brightness;
-        if (g < 0)
-            g = 0;
-        if (g > 1)
-            g = 1;
-
-        // Gamma correction inverse
-        uint8_t out = (uint8_t)(powf(g, 1.0f / gamma) * 255.0f);
-
-        gammaLUT[i] = out;
-    }
-
-    // Brightness-only LUT for bitmap RGB565 channels (0–255)
-    for (int i = 0; i < 256; i++)
-    {
-        float scaled = (float)i * brightness;
-        if (scaled > 255)
-            scaled = 255;
-        brightnessLUT[i] = (uint8_t)scaled;
+        return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     }
 }
 
-//
-// Convert 24-bit RGB to 16-bit RGB565
-//
-uint16_t DisplayManager::rgbTo565(uint8_t r, uint8_t g, uint8_t b)
+void DisplayManager::begin(Adafruit_Protomatter &m, uint8_t bitDepth)
 {
-    return ((r & 0xF8) << 8) |
-           ((g & 0xFC) << 3) |
-           (b >> 3);
+    matrix = &m;
+    levelStep = 256 >> bitDepth; // Protomatter keeps only the top bitDepth bits of each channel
+    matrix->setTextWrap(false);
+    setBrightness(1.0f);
 }
 
-uint16_t DisplayManager::color565(uint8_t r, uint8_t g, uint8_t b)
+void DisplayManager::setBrightness(float value)
 {
-    uint8_t rr = gammaLUT[r];
-    uint8_t gg = gammaLUT[g];
-    uint8_t bb = gammaLUT[b];
-
-    return rgbTo565(rr, gg, bb);
-}
-
-//
-// Draw a bitmap using LUT brightness scaling
-// (Bitmap must be 565 format)
-//
-void DisplayManager::drawBitmap(const uint16_t *bitmap, int w, int h, int x, int y)
-{
-    uint16_t *scaled = new uint16_t[w * h];
-
-    for (int i = 0; i < w * h; i++)
+    value = constrain(value, 0.0f, 1.0f);
+    if (fabsf(value - brightness) < 0.001f)
     {
-        uint16_t c = bitmap[i];
-
-        // Extract 565 colors
-        uint8_t r5 = (c >> 11) & 0x1F;
-        uint8_t g6 = (c >> 5) & 0x3F;
-        uint8_t b5 = c & 0x1F;
-
-        // Convert to 8-bit for LUT
-        uint8_t r = r5 << 3;
-        uint8_t g = g6 << 2;
-        uint8_t b = b5 << 3;
-
-        // Apply brightness LUT ONLY (bitmap does not need gamma)
-        r = gammaLUT[r];
-        g = gammaLUT[g];
-        b = gammaLUT[b];
-
-        scaled[i] = rgbTo565(r, g, b);
+        return;
     }
+    brightness = value;
 
-    matrix->drawRGBBitmap(x, y, scaled, w, h);
+    // Perceptual dimming: brightness acts on lightness rather than raw LED duty
+    float factor = powf(brightness, 1.0f / GAMMA);
+    lut[0] = 0;
+    for (int i = 1; i < 256; i++)
+    {
+        // Round to the nearest level the matrix can show (it would truncate otherwise),
+        // and keep lit pixels at least one level up so they never vanish when dimmed
+        int level = lroundf(i * factor / levelStep) * levelStep;
+        lut[i] = constrain(level, brightness > 0 ? levelStep : 0, 255);
+    }
+}
 
-    delete[] scaled;
+uint16_t DisplayManager::color(uint8_t r, uint8_t g, uint8_t b) const
+{
+    return pack565(lut[r], lut[g], lut[b]);
+}
+
+uint16_t DisplayManager::scale565(uint16_t c) const
+{
+    return color(((c >> 11) & 0x1F) << 3, ((c >> 5) & 0x3F) << 2, (c & 0x1F) << 3);
+}
+
+void DisplayManager::drawBitmap(const uint16_t *bitmap, int16_t w, int16_t h, int16_t x, int16_t y)
+{
+    matrix->startWrite();
+    for (int16_t row = 0; row < h; row++)
+    {
+        for (int16_t col = 0; col < w; col++)
+        {
+            uint16_t c = pgm_read_word(&bitmap[row * w + col]);
+            if (c)
+            {
+                matrix->writePixel(x + col, y + row, scale565(c));
+            }
+        }
+    }
+    matrix->endWrite();
+}
+
+void DisplayManager::clear()
+{
+    matrix->fillScreen(0);
+}
+
+void DisplayManager::show()
+{
+    matrix->show();
+}
+
+void DisplayManager::drawCentered(const char *text, int16_t baseline)
+{
+    int16_t x1, y1;
+    uint16_t w, h;
+    matrix->getTextBounds(text, 0, baseline, &x1, &y1, &w, &h);
+    matrix->setCursor((matrix->width() - w) / 2 - x1, baseline);
+    matrix->print(text);
+}
+
+void DisplayManager::drawMessage(const char *line1, const char *line2)
+{
+    matrix->setFont(&Picopixel);
+    matrix->setTextSize(1);
+    matrix->setTextColor(color(255, 255, 255));
+    if (line2)
+    {
+        drawCentered(line1, 13);
+        matrix->setTextColor(color(255, 128, 0));
+        drawCentered(line2, 23);
+    }
+    else
+    {
+        drawCentered(line1, 18);
+    }
+}
+
+void DisplayManager::drawStaleMarker()
+{
+    matrix->drawPixel(matrix->width() - 1, 0, color(255, 0, 0));
+}
+
+// Bottom banner with the brightness percentage and a gauge, drawn over the current screen
+void DisplayManager::drawBrightnessOverlay(float level)
+{
+    constexpr int16_t TOP = 23;
+    constexpr int16_t BAR_X = 20, BAR_Y = 26, BAR_W = 41, BAR_H = 4;
+    int16_t width = matrix->width();
+
+    matrix->fillRect(0, TOP, width, matrix->height() - TOP, 0);
+    matrix->drawFastHLine(0, TOP, width, color(60, 60, 60));
+
+    matrix->setFont(&Picopixel);
+    matrix->setTextSize(1);
+    matrix->setTextColor(color(255, 255, 255));
+    matrix->setCursor(2, 30);
+    matrix->print(String(lroundf(level * 100)) + "%");
+
+    matrix->drawRect(BAR_X, BAR_Y, BAR_W, BAR_H, color(90, 90, 90));
+    matrix->fillRect(BAR_X + 1, BAR_Y + 1, lroundf((BAR_W - 2) * level), BAR_H - 2, color(255, 200, 0));
 }

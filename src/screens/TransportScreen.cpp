@@ -1,86 +1,143 @@
 #include "TransportScreen.h"
-#include "bitmap.h"
 #include <Fonts/Picopixel.h>
-#include "managers/DisplayManager.h"
+#include "managers/ConfigManager.h"
+#include "ui/Text.h"
 
-TransportScreen::TransportScreen(Adafruit_Protomatter *m, TransportManager *w)
+namespace
 {
-    matrix = m;
-    transportManager = w;
+    constexpr int16_t ROW_HEIGHT = 17;
+    constexpr int16_t BADGE_SIZE = 11;
+    constexpr long DEPARTED_GRACE_S = 30;
+
+    // Countdown from the scheduled time so it stays accurate between syncs
+    String formatDeparture(const Departure &departure, time_t now)
+    {
+        if (!departure.at || !now)
+        {
+            return departure.label;
+        }
+        long seconds = departure.at - now;
+        if (seconds < -DEPARTED_GRACE_S)
+        {
+            return "";
+        }
+        if (seconds < 60)
+        {
+            return "Proche";
+        }
+        return String(seconds / 60) + " min";
+    }
+}
+
+void TransportScreen::onShow()
+{
+    direction1.reset();
+    direction2.reset();
 }
 
 void TransportScreen::draw()
 {
-    matrix->fillScreen(0);
-    displayManager.drawBitmap(bitmap_line_a, 11, 11, 2, 2);
-    matrix->drawLine(0, 16, 64, 16, displayManager.color565(30, 30, 30));
-    displayManager.drawBitmap(bitmap_line_a, 11, 11, 2, 19);
-
-    matrix->setTextSize(1);
-    matrix->setFont(&Picopixel);
-    matrix->setTextColor(displayManager.color565(255, 255, 255));
-
-    matrix->setCursor(15, 6);
-    String direction1 = String(transportManager->direction1);
-    if (transportManager->isPerturbations)
+    if (!transport.hasData())
     {
-        matrix->setTextColor(displayManager.color565(255, 0, 0));
-        direction1 = "! " + direction1;
+        display.drawMessage("Loading...", "transports");
+        return;
     }
-    if (direction1.length() > 10)
-    {
-        direction1 = direction1.substring(0, 10) + "...";
-    }
-    matrix->print(direction1);
 
-    matrix->setTextColor(displayManager.color565(255, 255, 255));
-    matrix->setCursor(15, 23);
-    String direction2 = String(transportManager->direction2);
-    if (transportManager->isPerturbations)
-    {
-        matrix->setTextColor(displayManager.color565(255, 0, 0));
-        direction2 = "! " + direction2;
-    }
-    if (direction2.length() > 10)
-    {
-        direction2 = direction2.substring(0, 10) + "...";
-    }
-    matrix->print(direction2);
+    TransportData data = transport.get();
+    time_t now = time.epoch();
 
-    matrix->setTextColor(displayManager.color565(255, 255, 255));
-    matrix->setCursor(15, 12);
-    String times1 = "";
-    if (transportManager->next1[0] != "")
+    drawStop(data.stops[0], 0, data.disrupted, now);
+    if (ConfigManager::getInstance().apiTransportStopId2 > 0)
     {
-        times1 = String(transportManager->next1[0]);
-        if (transportManager->next1[1] != "")
-        {
-            times1 += String(", ") + String(transportManager->next1[1]);
-        }
+        display.gfx().drawFastHLine(0, 16, display.gfx().width(), display.color(30, 30, 30));
+        drawStop(data.stops[1], 1, data.disrupted, now);
     }
-    matrix->print(times1);
 
-    matrix->setCursor(15, 29);
-    String times2 = "";
-    if (transportManager->next2[0] != "")
+    if (transport.isStale())
     {
-        times2 = String(transportManager->next2[0]);
-        if (transportManager->next2[1] != "")
-        {
-            times2 += String(", ") + String(transportManager->next2[1]);
-        }
+        display.drawStaleMarker();
     }
-    matrix->print(times2);
-
-    matrix->show();
-    transportManager->setDirty(false);
 }
 
-void TransportScreen::update()
+void TransportScreen::drawStop(const StopDepartures &stop, int index, bool disrupted, time_t now)
 {
-    if (transportManager->isDirty())
+    Adafruit_Protomatter &gfx = display.gfx();
+    int16_t top = index * ROW_HEIGHT;
+    uint16_t white = display.color(255, 255, 255);
+
+    drawLineBadge(2, top + 2);
+
+    String direction = toAscii(stop.direction);
+    if (disrupted)
     {
-        draw();
+        direction = "! " + direction;
     }
-    transportManager->update();
+    ScrollText &scroll = index == 0 ? direction1 : direction2;
+    scroll.draw(display, direction, 15, top + 6, disrupted ? display.color(255, 0, 0) : white);
+
+    String times;
+    int shown = 0;
+    for (size_t i = 0; i < stop.count && shown < 2; i++)
+    {
+        String label = formatDeparture(stop.next[i], now);
+        if (label.isEmpty())
+        {
+            continue;
+        }
+        times += shown++ ? ", " + label : label;
+    }
+
+    gfx.setFont(&Picopixel);
+    gfx.setTextSize(1);
+    gfx.setTextColor(white);
+    gfx.setCursor(15, top + 12);
+    gfx.print(times.isEmpty() ? "--" : times);
+}
+
+// Rounded badge in the line's color with its name
+void TransportScreen::drawLineBadge(int16_t x, int16_t y)
+{
+    static const struct
+    {
+        const char *prefix;
+        uint8_t r, g, b;
+    } LINE_COLORS[] = {
+        {"A", 248, 68, 144},
+        {"B", 0, 132, 207},
+        {"C", 242, 145, 0},
+        {"D", 0, 164, 82},
+        {"F", 132, 189, 0},
+        {"T", 139, 39, 133},
+    };
+
+    Adafruit_Protomatter &gfx = display.gfx();
+    const String &line = ConfigManager::getInstance().apiTransportLigneCli;
+
+    uint16_t background = display.color(90, 90, 90);
+    for (const auto &entry : LINE_COLORS)
+    {
+        if (line.startsWith(entry.prefix))
+        {
+            background = display.color(entry.r, entry.g, entry.b);
+            break;
+        }
+    }
+    gfx.fillRoundRect(x, y, BADGE_SIZE, BADGE_SIZE, 2, background);
+    gfx.setTextColor(0); // Black: unlit LEDs read best on a colored badge
+
+    if (line.length() == 1)
+    {
+        gfx.setFont(nullptr); // Classic 5x7 font, top-left anchored
+        gfx.setTextSize(1);
+        gfx.setCursor(x + 3, y + 2);
+        gfx.print(line);
+        return;
+    }
+
+    int16_t x1, y1;
+    uint16_t w, h;
+    gfx.setFont(&Picopixel);
+    gfx.getTextBounds(line, 0, 0, &x1, &y1, &w, &h);
+    gfx.setCursor(x + (BADGE_SIZE - w) / 2 - x1, y + 8);
+    gfx.print(line);
 }

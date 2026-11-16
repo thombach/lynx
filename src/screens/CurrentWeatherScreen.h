@@ -1,17 +1,20 @@
 #pragma once
-
-#include <Adafruit_Protomatter.h>
-#include "../managers/WeatherManager.h"
 #include "Screen.h"
+#include "managers/AirQualityManager.h"
+#include "managers/DisplayManager.h"
+#include "managers/WeatherManager.h"
 
 class CurrentWeatherScreen : public Screen
 {
 public:
-    CurrentWeatherScreen(Adafruit_Protomatter *matrix, WeatherManager *weatherManager);
+    CurrentWeatherScreen(DisplayManager &display, WeatherManager &weather, AirQualityManager &airQuality)
+        : display(display), weather(weather), airQuality(airQuality) {}
     void draw() override;
-    void update() override;
 
 private:
-    Adafruit_Protomatter *matrix;
-    WeatherManager *weatherManager;
+    DisplayManager &display;
+    WeatherManager &weather;
+    AirQualityManager &airQuality;
+
+    uint16_t aqiColor(int aqi) const;
 };

@@ -1,72 +1,74 @@
 #include "CurrentWeatherScreen.h"
-#include <math.h>
 #include <Fonts/Picopixel.h>
-#include "managers/DisplayManager.h"
+#include "WeatherIcons.h"
 
-CurrentWeatherScreen::CurrentWeatherScreen(Adafruit_Protomatter *m, WeatherManager *w)
+namespace
 {
-    matrix = m;
-    weatherManager = w;
+    constexpr int RIGHT_MARGIN = 10;
+    constexpr int UNIT_WIDTH = 12;
 }
 
 void CurrentWeatherScreen::draw()
 {
-    matrix->fillScreen(0);
-    // Weather image
-    const uint16_t *weatherImage = weatherManager->getBitmap(weatherManager->currentWeatherCode, true);
-    displayManager.drawBitmap(weatherImage, 16, 16, 9, 7);
+    if (!weather.hasData())
+    {
+        display.drawMessage("Loading...", "weather");
+        return;
+    }
 
-    // Margin for temperature and IQA
-    int margin = 10;
+    WeatherData data = weather.get();
+    Adafruit_Protomatter &gfx = display.gfx();
+    uint16_t white = display.color(255, 255, 255);
+    int16_t x1, y1;
+    uint16_t w, h;
+
+    display.drawBitmap(weatherIcon(data.weatherCode, !data.isDay), 16, 16, 9, 7);
 
     // Temperature
-    String tempStr = String(String((int)round(weatherManager->currentTemperature)));
-    int16_t x1, y1;
-    uint16_t w1, h1;
-    int wTempUnit = 12;
-    matrix->setFont(NULL);
-    matrix->setTextSize(1);
-    matrix->getTextBounds(tempStr, 0, 0, &x1, &y1, &w1, &h1);
-    int16_t xTemp = matrix->width() - margin - (w1 + wTempUnit);
-    int16_t yTemp = 11 - (h1 / 2) - y1;
-    matrix->setCursor(xTemp, yTemp);
-    matrix->setTextColor(displayManager.color565(255, 255, 255));
-    matrix->print(tempStr);
+    String temperature = String((int)roundf(data.temperature));
+    gfx.setFont(nullptr);
+    gfx.setTextSize(1);
+    gfx.getTextBounds(temperature, 0, 0, &x1, &y1, &w, &h);
+    gfx.setCursor(gfx.width() - RIGHT_MARGIN - (w + UNIT_WIDTH), 11 - h / 2 - y1);
+    gfx.setTextColor(white);
+    gfx.print(temperature);
+    int16_t x = gfx.getCursorX();
+    int16_t y = gfx.getCursorY();
+    gfx.drawCircle(x + 3, y, 1, white);
+    gfx.setCursor(x + 6, y);
+    gfx.print("C");
 
-    int x2 = matrix->getCursorX();
-    int y2 = matrix->getCursorY();
-    matrix->drawCircle(x2 + 3, y2, 1, displayManager.color565(255, 255, 255));
-    matrix->setCursor(x2 + 6, y2);
-    matrix->print("C");
+    // Air quality
+    bool hasAqi = airQuality.hasData();
+    int aqi = airQuality.get().aqi;
+    String aqiStr = hasAqi ? String(aqi) : String("--");
+    gfx.getTextBounds(aqiStr, 0, 0, &x1, &y1, &w, &h);
+    gfx.setCursor(gfx.width() - RIGHT_MARGIN - (w + UNIT_WIDTH), 21 - h / 2 - y1);
+    gfx.setTextColor(hasAqi ? aqiColor(aqi) : white);
+    gfx.print(aqiStr);
 
-    // AQI
-    String aqiStr = String(weatherManager->currentAqi);
-    int16_t x3, y3;
-    uint16_t w3, h3;
-    int wAqiUnit = 12;
-    matrix->setFont(NULL);
-    matrix->setTextSize(1);
-    matrix->getTextBounds(aqiStr, 0, 0, &x3, &y3, &w3, &h3);
-    int16_t xAqi = matrix->width() - margin - (w3 + wAqiUnit);
-    int16_t yAqi = 21 - (h3 / 2) - y3;
-    matrix->setCursor(xAqi, yAqi);
-    matrix->setTextColor(weatherManager->getAqiColor(weatherManager->currentAqi));
-    matrix->print(aqiStr);
+    gfx.setFont(&Picopixel);
+    gfx.setTextColor(white);
+    gfx.setCursor(gfx.getCursorX() + 2, gfx.getCursorY());
+    gfx.print("AQI");
 
-    matrix->setFont(&Picopixel);
-    matrix->setTextColor(displayManager.color565(255, 255, 255));
-    matrix->setCursor(matrix->getCursorX() + 2, matrix->getCursorY());
-    matrix->print("AQI");
-
-    matrix->show();
-    weatherManager->setDirty(false);
+    if (weather.isStale() || airQuality.isStale())
+    {
+        display.drawStaleMarker();
+    }
 }
 
-void CurrentWeatherScreen::update()
+uint16_t CurrentWeatherScreen::aqiColor(int aqi) const
 {
-    if (weatherManager->isDirty())
-    {
-        draw();
-    }
-    weatherManager->update();
+    if (aqi < 20)
+        return display.color(0, 255, 0); // Good
+    if (aqi < 40)
+        return display.color(255, 255, 0); // Fair
+    if (aqi < 60)
+        return display.color(255, 128, 0); // Moderate
+    if (aqi < 80)
+        return display.color(255, 0, 0); // Poor
+    if (aqi < 100)
+        return display.color(255, 0, 255); // Very poor
+    return display.color(0, 0, 255);       // Extremely poor
 }

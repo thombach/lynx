@@ -1,59 +1,44 @@
 #include "BikeScreen.h"
-#include "bitmap.h"
-#include <math.h>
 #include <Fonts/Picopixel.h>
-#include "managers/DisplayManager.h"
-
-BikeScreen::BikeScreen(Adafruit_Protomatter *m, BikeManager *w)
-{
-    matrix = m;
-    bikeManager = w;
-}
+#include "bitmap.h"
+#include "ui/Text.h"
 
 void BikeScreen::draw()
 {
-    matrix->fillScreen(0);
-    // Station name
-    matrix->setTextSize(1);
-    matrix->setFont(&Picopixel);
-    matrix->setTextColor(displayManager.color565(255, 255, 255));
-    matrix->setCursor(2, 6);
-    matrix->print(bikeManager->stationName);
+    if (!bikes.hasData())
+    {
+        display.drawMessage("Loading...", "bikes");
+        return;
+    }
 
-    // Bike image
-    displayManager.drawBitmap(bitmap_bike, 35, 19, 3, 11);
+    BikeData data = bikes.get();
+    stationName.draw(display, toAscii(data.stationName), 2, 6, display.color(255, 255, 255));
 
-    // Bike number
-    int16_t x1, y1;
-    uint16_t w1, h1;
+    display.drawBitmap(bitmap_bike, 35, 19, 3, 11);
 
-    displayManager.drawBitmap(bitmap_heart, 5, 5, 56, 11);
-    String bikesStr = String(bikeManager->bikes);
-    matrix->getTextBounds(bikesStr, 0, 0, &x1, &y1, &w1, &h1);
-    matrix->setCursor(54 - w1, 15);
-    matrix->print(bikesStr);
+    display.gfx().setFont(&Picopixel);
+    display.gfx().setTextSize(1);
+    drawCount(bitmap_heart, data.bikes, 11);
+    drawCount(bitmap_lightning, data.eBikes, 18);
+    drawCount(bitmap_parking, data.availableStands, 25);
 
-    displayManager.drawBitmap(bitmap_lightning, 5, 5, 56, 18);
-    String eBikesStr = String(bikeManager->eBikes);
-    matrix->getTextBounds(eBikesStr, 0, 0, &x1, &y1, &w1, &h1);
-    matrix->setCursor(54 - w1, 22);
-    matrix->print(eBikesStr);
-
-    displayManager.drawBitmap(bitmap_parking, 5, 5, 56, 25);
-    String availableStandsStr = String(bikeManager->availableStands);
-    matrix->getTextBounds(availableStandsStr, 0, 0, &x1, &y1, &w1, &h1);
-    matrix->setCursor(54 - w1, 29);
-    matrix->print(availableStandsStr);
-
-    matrix->show();
-    bikeManager->setDirty(false);
+    if (bikes.isStale())
+    {
+        display.drawStaleMarker();
+    }
 }
 
-void BikeScreen::update()
+// 5x5 icon with the value right-aligned just before it
+void BikeScreen::drawCount(const uint16_t *icon, int value, int16_t y)
 {
-    if (bikeManager->isDirty())
-    {
-        draw();
-    }
-    bikeManager->update();
+    Adafruit_Protomatter &gfx = display.gfx();
+    String text(value);
+    int16_t x1, y1;
+    uint16_t w, h;
+
+    display.drawBitmap(icon, 5, 5, 56, y);
+    gfx.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+    gfx.setCursor(54 - w, y + 4);
+    gfx.setTextColor(display.color(255, 255, 255));
+    gfx.print(text);
 }

@@ -1,74 +1,45 @@
 #include "BikeManager.h"
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
+#include "ConfigManager.h"
+#include "net/Http.h"
 
-BikeManager::BikeManager() : config(ConfigManager::getInstance())
+bool BikeManager::fetch()
 {
-}
+    String url = "https://data.grandlyon.com/fr/datapusher/ws/rdata/jcd_jcdecaux.jcdvelov/all.json";
+    url += "?field=number&value=" + String(ConfigManager::getInstance().apiBikeStationId);
 
-void BikeManager::begin()
-{
-    sync();
-    lastSync = millis();
-}
+    JsonDocument filter;
+    JsonObject station = filter["values"].add<JsonObject>();
+    station["name"] = true;
+    station["available_bike_stands"] = true;
+    station["total_stands"]["availabilities"] = true;
 
-void BikeManager::update()
-{
-    if (millis() - lastSync > syncInterval)
+    JsonDocument doc;
+    if (!Http::getJson(url, doc, filter))
     {
-        sync();
-        setDirty(true);
-        lastSync = millis();
+        return false;
     }
-}
 
-void BikeManager::sync()
-{
-    Serial.println("Syncing bikes...");
-    HTTPClient http;
-    WiFiClientSecure client;
-    client.setInsecure();
-    String url = buildURL();
-    http.begin(client, url);
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK)
+    JsonObjectConst values = doc["values"][0];
+    if (values.isNull())
     {
-        String payload = http.getString();
-
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, payload);
-
-        if (!error)
-        {
-            bikes = doc["values"][0]["total_stands"]["availabilities"]["mechanicalBikes"];
-            eBikes = doc["values"][0]["total_stands"]["availabilities"]["electricalBikes"];
-            availableStands = doc["values"][0]["available_bike_stands"];
-            stationName = doc["values"][0]["name"].as<String>();
-            int dashIndex = stationName.indexOf('-');
-            if (dashIndex != -1)
-            {
-                stationName = stationName.substring(dashIndex + 1);
-                stationName.trim();
-            }
-            http.end();
-            Serial.println("Bikes sync successful!");
-        }
-        else
-        {
-            Serial.println("Error processing response");
-        }
+        Serial.println("[bike] Station not found");
+        return false;
     }
-    else
+
+    BikeData data;
+    data.bikes = values["total_stands"]["availabilities"]["mechanicalBikes"] | 0;
+    data.eBikes = values["total_stands"]["availabilities"]["electricalBikes"] | 0;
+    data.availableStands = values["available_bike_stands"] | 0;
+
+    // "10022 - PRIMAT / DUCROIZE" -> "PRIMAT / DUCROIZE"
+    data.stationName = values["name"] | "";
+    int dash = data.stationName.indexOf('-');
+    if (dash != -1)
     {
-        Serial.println("Error fetching bikes: " + String(httpCode));
-        Serial.println(http.getString());
+        data.stationName = data.stationName.substring(dash + 1);
+        data.stationName.trim();
     }
-    http.end();
-}
 
-String BikeManager::buildURL()
-{
-    String url = BASE_URL;
-    url += "?field=number&value=" + String(config.apiBikeStationId);
-    return url;
+    publish(data);
+    return true;
 }
